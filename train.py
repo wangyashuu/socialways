@@ -13,6 +13,7 @@ from torch.autograd import Variable
 from utils.parse_utils import Scale
 from torch.utils.data import DataLoader
 from utils.linear_models import predict_cv
+import wandb
 
 
 
@@ -50,6 +51,11 @@ parser.add_argument('--dataset', '--data',
                     help='pick a specific dataset (default: "hotel")')
 
 parser.add_argument('--dataset_path', '--data_path', type=str)
+
+# Wandb
+parser.add_argument('--project', default=None, type=str)
+parser.add_argument('--entity', default=None, type=str)
+
 
 args = parser.parse_args()
 
@@ -565,7 +571,7 @@ def train():
           % (epoch, train_ADE, train_FDE, toc - tic))
 
 
-def test(n_gen_samples=20, linear=False, write_to_file=None, just_one=False):
+def test(n_gen_samples=20, linear=False, write_to_file=None, just_one=False, epoch=None):
     # =========== Test error ============
     plt.close()
     ade_avg_12, fde_avg_12 = 0, 0
@@ -624,10 +630,19 @@ def test(n_gen_samples=20, linear=False, write_to_file=None, just_one=False):
     fde_avg_12 /= n_test_samples
     ade_min_12 /= n_test_samples
     fde_min_12 /= n_test_samples
+    wandb.log({
+        'epoch': epoch,
+        'avg_ade': ade_avg_12,
+        'avg_fde': fde_avg_12,
+        'min_ade': ade_min_12,
+        'min_fde': fde_min_12
+    })
     print('Avg ADE,FDE (12)= (%.3f, %.3f) | Min(20) ADE,FDE (12)= (%.3f, %.3f)' \
           % (ade_avg_12, fde_avg_12, ade_min_12, fde_min_12))
 
 
+
+# MARK: - Main
 # =======================================================
 # ===================== M A I N =========================
 # =======================================================
@@ -655,8 +670,16 @@ else:
 # exit(1)
 
 # ===================== TRAIN =========================
-just = time.perf_counter()
 
+
+wandb_params = None
+if args.entity is not None:
+    wandb_params = dict(entity=args.entity, project=args.project)
+    del args.entity
+    del args.project
+
+run = wandb.init(config=args, **(wandb_params or dict(mode = 'disabled')))
+just = time.perf_counter()
 for epoch in trange(start_epoch, n_epochs + 1):  # FIXME : set the number of epochs
     # Main training function
     train()
@@ -664,6 +687,7 @@ for epoch in trange(start_epoch, n_epochs + 1):  # FIXME : set the number of epo
     # ============== Save model on disk ===============
     if epoch % 50 == 0:  # FIXME : set the interval for running tests
         now = time.perf_counter()
+        test(128, write_to_file=None, just_one=False, epoch=epoch)
         print(f'{now - just}, Saving model to file ...', model_file)
         torch.save({
             'epoch': epoch,
@@ -675,9 +699,12 @@ for epoch in trange(start_epoch, n_epochs + 1):  # FIXME : set the number of epo
             'D_dict': D.state_dict(),
             'D_optimizer': D_optimizer.state_dict()
         }, model_file)
+        wandb.save(model_file)
         just = now
 
-    if epoch % 5 == 0:
-        wr_dir = './medium/' + dataset_name + '/' + model_name + '/' + str(epoch)
-        os.makedirs(wr_dir, exist_ok=True)
-        test(128, write_to_file=wr_dir, just_one=True)
+    # if epoch % 5 == 0:
+    #     wr_dir = './medium/' + dataset_name + '/' + model_name + '/' + str(epoch)
+    #     os.makedirs(wr_dir, exist_ok=True)
+    #     test(128, write_to_file=wr_dir, just_one=True)
+
+run.finish()
