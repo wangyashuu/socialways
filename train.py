@@ -15,6 +15,7 @@ from torch.utils.data import DataLoader
 from utils.linear_models import predict_cv
 
 
+
 # Parser arguments
 parser = argparse.ArgumentParser(description='Social Ways trajectory prediction.')
 parser.add_argument('--batch-size', '--b',
@@ -45,16 +46,20 @@ parser.add_argument('--hidden-size', '--h-size',
                     help='size of network intermediate layer (default: 64)')
 parser.add_argument('--dataset', '--data',
                     default='hotel',
-                    choices=['hotel'],
+                    choices=['hotel', 'zara1'],
                     help='pick a specific dataset (default: "hotel")')
+
+parser.add_argument('--dataset_path', '--data_path', type=str)
+
 args = parser.parse_args()
 
 
 # ========== set input/output files ============
 dataset_name = args.dataset
 model_name = args.model
-input_file = '../hotel-8-12.npz'
-model_file = '../trained_models/' + model_name + '-' + dataset_name + '.pt'
+input_file = args.dataset_path # './traj-datasets/data_zara-1/zara01-8-12.npz'
+os.makedirs('./trained_models', exist_ok=True)
+model_file = './trained_models/' + model_name + '-' + dataset_name + '.pt'
 
 # FIXME: ====== training hyper-parameters ======
 # Unrolled GAN
@@ -437,7 +442,7 @@ def predict(obsv_p, noise, n_next, sub_batches=[]):
 
 # =============== Training Loop ==================
 def train():
-    tic = time.clock()
+    tic = time.perf_counter()
     # Evaluation metrics (ADE/FDE)
     train_ADE, train_FDE = 0, 0
     batch_size_accum = 0;
@@ -555,7 +560,7 @@ def train():
 
     train_ADE /= n_train_samples
     train_FDE /= n_train_samples
-    toc = time.clock()
+    toc = time.perf_counter()
     print(" Epc=%4d, Train ADE,FDE = (%.3f, %.3f) | time = %.1f" \
           % (epoch, train_ADE, train_FDE, toc - tic))
 
@@ -606,7 +611,14 @@ def test(n_gen_samples=20, linear=False, write_to_file=None, just_one=False):
             fde_avg_12 += all_20_errors[:, :, -1].mean(0, keepdim=True).sum().item()
             ade_avg_12 += all_20_errors.mean(2).mean(0, keepdim=True).sum().item()
             # ==================================================
-        if just_one: break
+        if just_one:
+            ade_avg_12 /= bs
+            fde_avg_12 /= bs
+            ade_min_12 /= bs
+            fde_min_12 /= bs
+            print('Avg ADE,FDE (12)= (%.3f, %.3f) | Min(20) ADE,FDE (12)= (%.3f, %.3f)' \
+                % (ade_avg_12, fde_avg_12, ade_min_12, fde_min_12))
+            return
 
     ade_avg_12 /= n_test_samples
     fde_avg_12 /= n_test_samples
@@ -643,13 +655,16 @@ else:
 # exit(1)
 
 # ===================== TRAIN =========================
+just = time.perf_counter()
+
 for epoch in trange(start_epoch, n_epochs + 1):  # FIXME : set the number of epochs
     # Main training function
     train()
 
     # ============== Save model on disk ===============
     if epoch % 50 == 0:  # FIXME : set the interval for running tests
-        print('Saving model to file ...', model_file)
+        now = time.perf_counter()
+        print(f'{now - just}, Saving model to file ...', model_file)
         torch.save({
             'epoch': epoch,
             'attentioner_dict': attention.state_dict(),
@@ -657,12 +672,12 @@ for epoch in trange(start_epoch, n_epochs + 1):  # FIXME : set the number of epo
             'encoder_dict': encoder.state_dict(),
             'decoder_dict': decoder.state_dict(),
             'pred_optimizer': predictor_optimizer.state_dict(),
-
             'D_dict': D.state_dict(),
             'D_optimizer': D_optimizer.state_dict()
         }, model_file)
+        just = now
 
     if epoch % 5 == 0:
-        wr_dir = '../medium/' + dataset_name + '/' + model_name + '/' + str(epoch)
+        wr_dir = './medium/' + dataset_name + '/' + model_name + '/' + str(epoch)
         os.makedirs(wr_dir, exist_ok=True)
         test(128, write_to_file=wr_dir, just_one=True)
